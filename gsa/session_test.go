@@ -1,0 +1,80 @@
+package gsa
+
+import (
+	"errors"
+	"net/http"
+	"net/url"
+	"testing"
+)
+
+type failedProvider struct{}
+
+func (failedProvider) Headers() (map[string]string, error) {
+	return nil, errors.New("test unavailable")
+}
+
+type snapshotProvider struct{ calls int }
+
+func (p *snapshotProvider) Headers() (map[string]string, error) {
+	p.calls++
+	return map[string]string{"X-Apple-I-MD": "test-current"}, nil
+}
+
+func TestSnapshotFetchesHeadersWhenRestoredSessionHasNoHeaderCache(t *testing.T) {
+	provider := &snapshotProvider{}
+	c := NewClient(provider)
+	session, err := c.Snapshot("test-dsid", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.calls != 1 || session.AnisetteHeaders["X-Apple-I-MD"] != "test-current" {
+		t.Fatal("snapshot did not initialize its authenticated header cache")
+	}
+}
+
+func TestRefreshRejectsStaleHeaders(t *testing.T) {
+	c := NewClient(failedProvider{})
+	c.cachedAnisetteHeaders = map[string]string{"X-Apple-I-MD": "test-stale"}
+	if _, err := c.refreshAnisetteHeaders(); err == nil {
+		t.Fatal("used stale headers after failed refresh")
+	}
+}
+
+func TestSnapshotRestoresRootCookieForAuthAndLogin(t *testing.T) {
+	c := NewClient(failedProvider{})
+	c.cachedAnisetteHeaders = map[string]string{}
+	u, _ := url.Parse(gsaBaseURL + "/auth")
+	c.cookieJar.SetCookies(u, []*http.Cookie{{Name: "test-cookie", Value: "test-value", Path: "/", Secure: true}})
+	sess, err := c.Snapshot("test-dsid", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := NewClientFromSession(failedProvider{}, sess)
+	for _, endpoint := range []string{"/auth", "/auth/verify/trusteddevice", "/grandslam/GsService2"} {
+		u, _ := url.Parse(gsaBaseURL + endpoint)
+		cookies := restored.cookieJar.Cookies(u)
+		if len(cookies) != 1 || cookies[0].Value != "test-value" {
+			t.Fatalf("cookie not restored for %s", endpoint)
+		}
+	}
+}
+
+func TestSnapshotRetainsAccountManagementAndAnnouncementCookies(t *testing.T) {
+	c := NewClient(failedProvider{})
+	c.cachedAnisetteHeaders = map[string]string{}
+	for _, endpoint := range []string{deviceListURL, deviceServiceURL} {
+		u, _ := url.Parse(endpoint)
+		c.cookieJar.SetCookies(u, []*http.Cookie{{Name: "test-management", Value: "test-value", Secure: true}})
+	}
+	sess, err := c.Snapshot("test-account", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := NewClientFromSession(failedProvider{}, sess)
+	for _, endpoint := range []string{deviceListURL, deviceServiceURL} {
+		u, _ := url.Parse(endpoint)
+		if cookies := restored.cookieJar.Cookies(u); len(cookies) != 1 || cookies[0].Value != "test-value" {
+			t.Fatal("account management cookies lost after restart")
+		}
+	}
+}

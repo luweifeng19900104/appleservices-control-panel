@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="app-token" content="__APP_TOKEN__">
+  <meta name="auth-token" content="__AUTH_TOKEN__">
+  <title>appleservices · 设备控制台</title>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+<aside class="sidebar">
+  <a class="brand" href="#"><span class="brand-icon">a<span></span></span><span>appleservices<small>设备控制台</small></span></a>
+  <span class="nav-label">工作空间</span>
+  <nav>
+    <a href="#overview" class="nav-item selected"><span class="nav-icon">◫</span>概览<span class="nav-marker"></span></a>
+    <a href="#devices" class="nav-item"><span class="nav-icon">▱</span>我的设备<span class="nav-count" id="navCount">—</span></a>
+    <a href="#requests" class="nav-item"><span class="nav-icon">◇</span>登录请求<span class="request-dot" id="requestDot" hidden></span></a>
+    <a href="#memory" class="nav-item"><span class="nav-icon">▤</span>内存与资源<span class="nav-count" id="memoryNavState">—</span></a>
+  </nav>
+  <div class="account-switcher">
+    <div class="account-switcher-head"><span class="nav-label">账号</span><button type="button" id="addAccountButton" title="添加账号">＋</button></div>
+    <div id="accountList" class="account-list"></div>
+    <button type="button" class="add-account-item" id="addAccountButtonSecondary"><span>＋</span>添加其他账号</button>
+    <button type="button" class="add-account-item" id="removeAccountButton" title="只从列表移除，设备身份保留在磁盘上"><span>−</span>移除当前账号</button>
+  </div>
+  <div class="sidebar-note"><span class="small-orb"></span><strong>只在这台电脑运行</strong><p>关闭面板后，后台仍继续保持登录。</p></div>
+  <div class="sidebar-bottom"><span class="avatar">a</span><span id="sidebarAccount">本机账户<small>Windows 工作空间</small></span><button type="button" class="sidebar-logout" id="logoutDashboard">退出</button></div>
+</aside>
+<main id="overview">
+  <header class="page-header"><div><div class="eyebrow">你的 Apple 工作空间</div><h1>设备与登录<span class="heading-dot">.</span></h1><p>在一处管理设备身份、登录状态和验证码。</p></div><div class="header-actions"><span class="local-badge"><span></span>本机面板</span><button class="icon-button" id="reloadView" aria-label="刷新状态" title="刷新状态">↻</button></div></header>
+  <div id="notice" class="notice" role="status" hidden></div>
+  <section class="top-grid overview-only">
+    <article class="session-card">
+      <div class="session-top"><span class="card-kicker">登录状态</span><span class="status-badge" id="statusBadge"><i></i>正在读取</span></div>
+      <div class="session-body"><div><h2 id="sessionTitle">连接你的设备</h2><p id="sessionDescription">正在读取本机后台状态…</p><span class="account-tag" id="accountTag" hidden></span></div><div class="computer-art" aria-hidden="true"><div class="computer-screen"><div class="screen-gradient"></div><span class="screen-mark">a</span></div><div class="computer-base"></div><div class="computer-shadow"></div></div></div>
+      <div class="session-metrics"><div><span class="metric-dot" id="authDot"></span><div><small>账户认证</small><strong id="authState">正在读取</strong></div></div><div><span class="metric-dot" id="pushDot"></span><div><small>验证码推送</small><strong id="pushState">正在读取</strong></div></div><div><span class="metric-dot" id="renewDot"></span><div><small>自动续登录</small><strong id="renewState">每 10 分钟</strong></div></div></div>
+      <div class="session-actions"><button class="button button-light" id="startButton">连接账户<span>↗</span></button><button class="button button-light" id="renewButton" hidden>验证 Apple 账户<span>✓</span></button><button class="quiet-button" id="stopButton" hidden>停止后台</button><span class="session-hint" id="sessionHint">登录身份会在本机保留</span></div>
+    </article>
+    <article class="code-card"><div class="card-title-row"><div><span class="card-kicker dark">身份验证</span><h2>本机验证码</h2></div><span class="shield-icon">◇</span></div><p class="card-description">用于你正在进行的 Apple 账户登录。</p><div class="code-display" id="codeDisplay" aria-live="polite">••• <span>•••</span></div><div class="code-detail" id="codeDetail">登录后可生成六位验证码</div><div class="code-actions"><button class="button button-primary" id="codeButton" disabled>显示验证码<span>→</span></button><button class="copy-button" id="copyButton" aria-label="复制验证码" title="复制验证码" disabled>⧉</button></div><div class="code-footer"><span class="lock-icon">▣</span>仅手动显示，不写入运行日志</div></article>
+  </section>
+  <div class="notice overview-only" id="capabilityNotice" role="status" hidden></div>
+  <section class="verification-banner overview-only" id="smsPanel" hidden><div><span class="card-kicker dark">首次登录验证</span><h3>输入手机号收到的短信验证码</h3><p>验证码已发送到账户绑定的手机号。</p></div><form id="smsForm"><input id="smsCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="六位短信验证码" aria-label="六位短信验证码" required><button class="button button-primary" type="submit">验证并登录</button><button class="quiet-button dark-text" type="button" id="resendButton">重发短信</button></form></section>
+  <section class="verification-banner overview-only" id="pairingPanel" hidden><div><span class="card-kicker dark">设备配对验证</span><h3>输入受信任设备显示的配对码</h3><p>项目通过 APS 和 GSA 完成证明交换，不启动官方客户端。</p></div><form id="pairingForm"><input id="pairingCode" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="六位配对码" aria-label="六位配对码" required><button class="button button-primary" type="submit">发送配对证明</button></form></section>
+  <section class="feature-center overview-only" id="featureCenter">
+    <div class="feature-center-head"><div><span class="section-kicker">功能中心</span><h2>全部功能与可用状态</h2></div><p>入口始终显示；条件不足时会标明缺少的步骤。</p></div>
+    <div class="feature-grid">
+      <button class="feature-tile" type="button" data-feature-target="activationCard"><span class="feature-symbol">IC</span><span><strong>iCloud 激活</strong><small>条款、NAC 与服务会话</small></span><span class="feature-tile-state locked" id="featureActivationStatus">未连接</span></button>
+      <button class="feature-tile" type="button" data-feature-target="devices"><span class="feature-symbol">DV</span><span><strong>设备与验证码</strong><small>设备列表、推送与登录请求</small></span><span class="feature-tile-state locked" id="featureDeviceStatus">未连接</span></button>
+      <button class="feature-tile" type="button" data-feature-target="storageCard"><span class="feature-symbol">ST</span><span><strong>储存空间</strong><small>容量、使用量与实时配额</small></span><span class="feature-tile-state locked" id="featureStorageStatus">未连接</span></button>
+      <button class="feature-tile" type="button" data-feature-target="familyCard"><span class="feature-symbol">FM</span><span><strong>家庭共享</strong><small>成员、母号与共享空间</small></span><span class="feature-tile-state locked" id="featureFamilyStatus">未连接</span></button>
+      <button class="feature-tile" type="button" data-feature-target="hmeCard"><span class="feature-symbol">HM</span><span><strong>隐藏邮件地址</strong><small>创建、转发、停用与恢复</small></span><span class="feature-tile-state locked" id="featureHMEStatus">未连接</span></button>
+      <button class="feature-tile" type="button" data-feature-target="planCard"><span class="feature-symbol">PL</span><span><strong>方案与购买会话</strong><small>报价、Store 验证与购买确认</small></span><span class="feature-tile-state locked" id="featureStoreStatus">未连接</span></button>
+    </div>
+  </section>
+  <section class="request-card overview-only feature-locked" id="activationCard"><div class="card-title-row"><div><span class="card-kicker">iCloud 激活</span><h3>完成条款与 Mac NAC 验收</h3></div><span class="subtle-tag" id="activationState">等待账号</span></div><p id="activationSummary" class="card-description">连接账号并完成密码与验证码验证后，可在此继续激活。</p><p id="activationVersions" class="cache-note" hidden></p><div class="commerce-actions"><a class="text-button" id="activationICloudTerms" target="_blank" rel="noopener" hidden>查看 iCloud 条款 ↗</a><a class="text-button" id="activationMediaTerms" target="_blank" rel="noopener" hidden>查看媒体服务条款 ↗</a><button class="text-button" id="activationCheckButton" disabled>检查激活状态</button><button class="button button-primary" id="activationAcceptButton" hidden>同意条款并继续激活</button></div></section>
+  <section class="request-card overview-only" id="storageCard"><div class="card-title-row"><h3>iCloud 储存空间</h3><button class="text-button" id="storageButton" disabled>查询储存空间</button></div><p id="storageSummary" class="card-description">登录后查询当前容量和使用情况。</p><p id="storageCacheNote" class="cache-note">尚无本地状态</p></section>
+  <section class="request-card overview-only family-card" id="familyCard">
+    <div class="card-title-row"><div><h3>家庭共享</h3><p class="card-description">查看成员资格，并把当前账号加入池内母号的共享 iCloud+。</p></div><div class="family-head-actions"><span id="familyCacheNote">尚无本地状态</span><button class="text-button" id="familyRefreshButton" disabled>读取 Apple 状态</button></div></div>
+    <div class="family-status" id="familyStatus"><span class="family-state-dot"></span><div class="family-status-copy"><strong id="familySummary">尚未读取家庭状态</strong><p id="familyDetail">操作前会实时核对成员、组织者和共享储存状态。</p></div><span class="family-status-chip" id="familyStatusChip">待读取</span></div>
+    <div class="family-map" id="familyMap" hidden>
+      <div class="family-node family-node-organizer"><span class="family-crown">★</span><div><small>家庭母号</small><strong id="familyOrganizerName">—</strong></div></div>
+      <div class="family-link"><span></span><small>共享 iCloud+</small><b>→</b></div>
+      <div class="family-node family-node-current"><span class="family-avatar" id="familyCurrentAvatar">A</span><div><small>当前账号</small><strong id="familyCurrentName">—</strong></div></div>
+    </div>
+    <div class="family-metrics" id="familyMetrics" hidden>
+      <div><small>家庭成员</small><strong id="familyMemberCount">—</strong></div>
+      <div><small>当前角色</small><strong id="familyRole">—</strong></div>
+      <div><small>共享储存</small><strong id="familyStorageState">—</strong></div>
+      <div><small>共享容量</small><strong id="familyStorageBytes">—</strong></div>
+    </div>
+    <div class="family-controls" id="familyControls">
+      <label for="familyOrganizer">池内母号</label>
+      <select id="familyOrganizer" aria-label="池内母号"></select>
+      <button class="button button-primary" id="familyAddButton" disabled>加入家庭并使用共享空间</button>
+      <button class="button button-light" id="familyJoinStorageButton" disabled>仅加入共享储存</button>
+    </div>
+    <div class="family-remove-controls" id="familyRemoveControls" hidden>
+      <div><strong>成员管理</strong><small>从当前家庭移出一个池内普通成员</small></div>
+      <select id="familyRemoveMember" aria-label="要移出的家庭成员"></select>
+      <button class="button button-danger" id="familyRemoveButton" disabled>移出家庭</button>
+    </div>
+    <p class="family-safety" id="familySafety">购买共享和位置共享不会开启；验证码仅在 Apple 挑战出现后由当前账号自己的本地 Mac 身份生成。</p>
+  </section>
+  <section class="request-card overview-only hme-card feature-locked" id="hmeCard">
+    <div class="card-title-row"><div><span class="card-kicker">iCloud+ 子号工具</span><h3>隐藏邮件地址</h3></div><div class="commerce-actions"><button class="text-button" id="hmeListButton">读取地址</button><button class="text-button hme-create-button" id="hmeGenerateButton">＋ 生成候选</button></div></div>
+    <p class="feature-prerequisite" id="hmeAvailability">完成 iCloud 激活并读取家庭共享状态后显示可用条件。</p>
+    <div class="hme-summary"><div><strong id="hmeActiveCount">—</strong><small>使用中</small></div><div><strong id="hmeInactiveCount">—</strong><small>已停用</small></div><p id="hmeSummary">读取后可按标签、备注或邮箱搜索。</p></div>
+    <div class="hme-forward-settings" id="hmeForwardSettings" hidden><div><small>所有隐私邮箱统一转发到</small><strong id="hmeForwardCurrent">—</strong><p id="hmeForwardHint">Apple 只允许选择已关联并验证的账户邮箱。</p></div><select id="hmeForwardSelect" aria-label="默认转发邮箱"></select><button class="button button-light" id="hmeForwardButton" disabled>保存转发目标</button><a class="text-button" href="https://account.apple.com/account/manage/section/signin-and-security" target="_blank" rel="noopener">管理账户邮箱 ↗</a></div>
+    <div class="hme-reachable" id="hmeReachablePanel" hidden><div><small>协议添加可联系邮箱</small><strong>添加并验证后自动切换全部隐私邮箱</strong></div><input id="hmeReachableEmail" type="email" maxlength="254" autocomplete="off" placeholder="目标转发邮箱" aria-label="要添加的账户邮箱"><button class="button button-light" id="hmeReachableStartButton" disabled>发送邮箱验证码</button><form id="hmeReachableCodeForm" hidden><input id="hmeReachableCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,8}" maxlength="8" placeholder="邮箱验证码" aria-label="目标邮箱验证码" required><button class="button button-primary" type="submit">验证并切换</button></form></div>
+    <div class="hme-candidate" id="hmeCandidatePanel" hidden><div><small>Apple 候选地址</small><strong id="hmeCandidateAddress">—</strong></div><input id="hmeCreateLabel" maxlength="128" placeholder="标签" aria-label="新地址标签"><input id="hmeCreateNote" maxlength="1024" placeholder="备忘录（可选）" aria-label="新地址备忘录"><button class="button button-primary" id="hmeReserveButton">确认创建</button><button class="icon-button" id="hmeCancelCandidate" title="取消候选" aria-label="取消候选">×</button></div>
+    <div class="hme-toolbar"><input id="hmeSearch" type="search" placeholder="搜索邮箱、标签或备忘录" aria-label="搜索隐藏邮件地址"><div class="hme-segments" role="group" aria-label="邮箱状态"><button class="active" data-hme-filter="active">使用中</button><button data-hme-filter="inactive">已停用</button><button data-hme-filter="all">全部</button></div></div>
+    <div class="hme-list" id="hmeList"><div class="hme-empty">尚未读取当前子号的地址</div></div>
+    <button class="text-button hme-more" id="hmeMoreButton" hidden>显示更多</button>
+  </section>
+  <section class="request-card overview-only" id="planCard"><div class="card-title-row"><h3>iCloud+ 方案</h3><div class="commerce-actions"><button class="text-button" id="planButton" disabled>读取可购方案</button><button class="text-button" id="storeAuthButton" disabled>验证购买会话</button><button class="text-button" id="purchaseButton" disabled>提交 50GB 方案</button></div></div><p id="planSummary" class="card-description">先读取 Apple 实时报价；仅已验证的币种与价格会启用购买按钮。</p><p id="planCacheNote" class="cache-note">尚无本地状态</p><p id="storeAuthSummary" class="card-description">购买会话尚未验证 · 临时会话不会持久化</p><form id="storeAuthForm" hidden><input id="storeCode" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" placeholder="Apple Store 六位验证码" aria-label="Apple Store 六位验证码" required><button class="text-button" type="submit">完成购买会话验证</button></form><div id="planList" class="plan-list"></div></section>
+  <section id="devices" class="devices-section"><div class="section-heading"><div><span class="section-kicker">已关联的设备</span><h2>我的设备 <span id="deviceCount">—</span></h2></div><button class="text-button" id="devicesButton" disabled>↻<span>刷新设备</span></button></div><div class="device-grid" id="deviceGrid"><div class="empty-state">正在读取设备列表…</div></div><div class="section-footnote"><span class="footnote-dot"></span><span id="deviceUpdate">设备列表与 Apple 账户同步</span></div></section>
+  <section class="lower-grid"><article class="request-card" id="requests"><div class="card-title-row"><h3>登录请求</h3><span class="subtle-tag" id="requestTag">等待请求</span></div><div class="request-content" id="requestContent"><span class="request-symbol">✓</span><div><strong id="requestTitle">没有待处理的登录请求</strong><p id="requestText">收到新的请求时，它会出现在这里。</p></div></div><div class="request-actions" id="requestActions" hidden><button class="button button-primary" id="allowButton">允许并显示验证码</button><button class="button button-outline" id="denyButton">拒绝</button></div></article><article class="activity-card overview-activity"><div class="card-title-row"><h3>最近动态</h3><span class="subtle-label">本次打开</span></div><div id="activityList" class="activity-list"><p class="empty-activity">状态变化会显示在这里</p></div></article></section>
+  <section class="request-card memory-section" id="memory">
+    <div class="card-title-row"><div><span class="card-kicker">资源保护</span><h3>内存守护</h3></div><span class="subtle-tag" id="memoryStateTag">正在读取</span></div>
+    <p class="card-description" id="memorySummary">按设置为其他程序保留内存，并限制本程序（面板与全部账号后台）的总占用。</p>
+    <div class="memory-metrics">
+      <div><small>系统总内存</small><strong id="memSystemTotal">—</strong></div>
+      <div><small>系统可用</small><strong id="memSystemAvailable">—</strong></div>
+      <div><small>本程序合计</small><strong id="memAppTotal">—</strong></div>
+      <div><small>面板进程</small><strong id="memDashboard">—</strong></div>
+      <div><small>单个后台预估</small><strong id="memEstimate">—</strong></div>
+    </div>
+    <div class="memory-bar" aria-hidden="true"><span id="memAppBar"></span></div>
+    <p class="cache-note" id="memorySource">—</p>
+    <div class="memory-accounts" id="memoryAccounts"><div class="hme-empty">尚无账号</div></div>
+    <form id="memorySettingsForm" class="memory-settings">
+      <label><span>为其他程序保留（MB）</span><input id="memReserve" type="number" min="0" max="1048576" step="64" required></label>
+      <label><span>本程序内存上限（MB）</span><input id="memMaxApp" type="number" min="128" max="1048576" step="64" required></label>
+      <label><span>检查间隔（秒）</span><input id="memInterval" type="number" min="1" max="300" step="1" required></label>
+      <button class="button button-primary" type="submit" id="memSaveButton">保存并立即生效</button>
+    </form>
+    <p class="family-safety">启动账号后台前会先核对内存；不足时进入排队，内存释放后自动启动。运行中若内存紧张，会正常停止最久未操作的空闲账号后台；内存恢复后自动继续。面板本身不会被停止。</p>
+  </section>
+  <footer class="page-footer"><span>appleservices <span class="footer-separator">/</span> 本机设备控制台</span><span id="lastUpdated">正在连接后台</span></footer>
+</main>
+<dialog id="loginDialog"><form id="loginForm" class="dialog-form" novalidate><div class="dialog-top"><span class="dialog-icon">a</span><button class="dialog-close" type="button" id="closeLogin" aria-label="关闭">×</button></div><div class="eyebrow">恢复你的工作空间</div><h2>连接 Apple 账户</h2><p id="loginDescription">可粘贴一行导入格式，或分开填写账号信息。账号密码和设备码链接会加密保存。</p><label for="accountImport">一行导入（可选）</label><input id="accountImport" type="password" autocomplete="off" placeholder="账号----密码----设备码接收链接"><div class="dialog-separator"><span>或分开填写</span></div><label for="appleID">Apple 账户</label><input id="appleID" name="apple_id" type="email" autocomplete="username" placeholder="你的账户邮箱"><label for="password">密码</label><input id="password" name="password" type="password" autocomplete="off" placeholder="输入账户密码"><label for="deviceCodeURL">设备码接收链接（可选）</label><input id="deviceCodeURL" type="password" inputmode="url" autocomplete="off" placeholder="https://.../getcode?id=..."><label for="twofactor">首次验证方式</label><select id="twofactor" name="twofactor"><option value="trusted-device">受信任设备验证码（推荐）</option><option value="sms">发送新的短信验证码</option><option value="sms-existing">使用已有短信码（不重新发送）</option><option value="circle">受信任设备配对</option></select><button class="button button-primary dialog-submit" id="loginSubmit" type="submit">登录并保持在线<span>→</span></button><button class="text-button danger-text" id="forgetCredentials" type="button" hidden>删除已保存的重连信息</button><div class="dialog-note" id="loginNote">密码和设备码链接使用服务器专用密钥加密，账号列表和日志不会保存明文。</div></form></dialog>
+<dialog id="stopDialog"><div class="dialog-form"><div class="eyebrow">后台连接</div><h2>停止保持登录？</h2><p>暂停推送接收和自动续登录。已保存的设备身份与 Cookie 会保留。</p><div class="dialog-actions"><button class="button button-outline" id="cancelStop">继续在线</button><button class="button button-danger" id="confirmStop">停止后台</button></div></div></dialog>
+<dialog id="hmeEditDialog"><form id="hmeEditForm" class="dialog-form"><div class="dialog-top"><span class="dialog-icon">@</span><button class="dialog-close" type="button" id="closeHMEEdit" aria-label="关闭">×</button></div><div class="eyebrow">隐藏邮件地址</div><h2>编辑地址信息</h2><p id="hmeEditAddress">—</p><label for="hmeEditLabel">标签</label><input id="hmeEditLabel" maxlength="128" required><label for="hmeEditNote">备忘录</label><input id="hmeEditNote" maxlength="1024"><button class="button button-primary dialog-submit" type="submit">存储更改</button></form></dialog>
+</body>
+</html>

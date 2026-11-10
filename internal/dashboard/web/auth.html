@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="auth-token" content="__AUTH_TOKEN__">
+  <title>appleservices · 管理登录</title>
+  <link rel="stylesheet" href="/auth.css">
+  <script src="/auth.js" defer></script>
+</head>
+<body>
+  <main class="auth-shell">
+    <section class="auth-panel" aria-labelledby="authTitle">
+      <header class="auth-brand"><span class="auth-mark">a</span><span>appleservices<small>设备控制台</small></span></header>
+      <div id="loadingState" class="loading-state">正在读取安全设置…</div>
+
+      <form id="setupForm" hidden>
+        <span class="auth-kicker">首次设置</span>
+        <h1 id="authTitle">创建管理密码</h1>
+        <p>该密码只用于打开本控制台，与 Apple ID 密码无关。</p>
+        <label for="setupPassword">管理密码</label>
+        <input id="setupPassword" name="password" type="password" minlength="10" maxlength="128" autocomplete="new-password" required autofocus>
+        <label for="setupConfirm">再次输入</label>
+        <input id="setupConfirm" name="confirm" type="password" minlength="10" maxlength="128" autocomplete="new-password" required>
+        <button type="submit">保存并进入控制台</button>
+      </form>
+
+      <form id="loginForm" hidden>
+        <span class="auth-kicker">管理登录</span>
+        <h1>输入管理密码</h1>
+        <p>验证成功后进入本机设备控制台。</p>
+        <label for="loginPassword">管理密码</label>
+        <input id="loginPassword" name="password" type="password" maxlength="128" autocomplete="current-password" required autofocus>
+        <button type="submit">登录</button>
+      </form>
+
+      <div id="authMessage" class="auth-message" role="alert" hidden></div>
+      <footer>会话最长保留 24 小时，服务重启后需要重新登录。</footer>
+    </section>
+  </main>
+</body>
+</html>

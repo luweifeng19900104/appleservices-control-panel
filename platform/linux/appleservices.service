@@ -1,0 +1,75 @@
+# appleservices dashboard for Linux (systemd).
+#
+# Installed by install.sh to /etc/systemd/system/appleservices.service.
+# Everything except config lives on the data disk under /data/appleservices:
+#   program  /data/appleservices/current  (-> releases/<version>)
+#   native   /data/appleservices/native/librust_lib_bluebubbles.so (setup-native.sh)
+#   state    /data/appleservices/state    (accounts.json, accounts/<id>/, memory-guard.json)
+#   logs     /data/appleservices/logs
+#   temp     /data/appleservices/tmp
+#   config   /etc/appleservices/appleservices.env
+# Optional: /opt/appleservices -> /data/appleservices (install.sh creates it when free).
+# The dashboard listens on 127.0.0.1 only (hard-coded); reach it through an SSH
+# tunnel, see README-linux.md. Never expose the port publicly.
+
+[Unit]
+Description=appleservices family dashboard (loopback only)
+Documentation=file:/data/appleservices/current/README-linux.md
+After=network-online.target
+Wants=network-online.target
+RequiresMountsFor=/data/appleservices
+
+[Service]
+Type=simple
+User=appleservices
+Group=appleservices
+# Defaults; /etc/appleservices/appleservices.env overrides them.
+Environment=APPLESERVICES_PORT=18741
+Environment=APPLESERVICES_EXTRA_ARGS=
+EnvironmentFile=-/etc/appleservices/appleservices.env
+# Credentials are never taken from the service environment.
+UnsetEnvironment=APPLESERVICES_APPLEID APPLESERVICES_PASSWORD LD_PRELOAD
+Environment=HOME=/data/appleservices/state
+Environment=XDG_CACHE_HOME=/data/appleservices/tmp/cache
+Environment=TMPDIR=/data/appleservices/tmp
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+WorkingDirectory=/data/appleservices/current
+ExecStart=/data/appleservices/current/bin/dashboard -dir /data/appleservices/state -worker /data/appleservices/current/bin/trusted-device -adi-dll /data/appleservices/native/librust_lib_bluebubbles.so -mac-push-setup /data/appleservices/current/tools/mac-push-check.py -credential-key /etc/appleservices/credential.key -python /usr/bin/python3 -port ${APPLESERVICES_PORT} $APPLESERVICES_EXTRA_ARGS
+StandardOutput=append:/data/appleservices/logs/dashboard.log
+StandardError=append:/data/appleservices/logs/dashboard.log
+# SIGINT reaches the dashboard and every account worker, which all stop
+# cleanly on it (saved sessions and device identities are kept).
+KillSignal=SIGINT
+KillMode=control-group
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=10
+UMask=0077
+LimitNOFILE=8192
+SystemCallArchitectures=native
+
+# Optional hard cap for the whole service (dashboard + workers). The memory
+# guard reads this cgroup limit and treats it as the machine size.
+#MemoryMax=2560M
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/data/appleservices/state /data/appleservices/logs /data/appleservices/tmp
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+# The native module enumerates interfaces through netlink.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target
