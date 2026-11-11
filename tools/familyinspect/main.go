@@ -85,6 +85,16 @@ type safeFamilySummary struct {
 	LocationSharingEnabled bool  `json:"location_sharing_enabled"`
 }
 
+type safePoolMemberCheck struct {
+	ValidICloud    bool `json:"valid_icloud"`
+	ValidPresent   bool `json:"valid_present"`
+	TermsAccepted  bool `json:"terms_accepted"`
+	TermsPresent   bool `json:"terms_present"`
+	SkipPayment    bool `json:"skip_payment"`
+	PaymentPresent bool `json:"payment_present"`
+	PVKEnabled     bool `json:"pvk_enabled"`
+}
+
 func decodeObject(data []byte) (map[string]any, error) {
 	var value map[string]any
 	if json.Unmarshal(data, &value) == nil {
@@ -116,6 +126,47 @@ func readLimited(resp *http.Response) ([]byte, error) {
 		return nil, fmt.Errorf("family request returned HTTP %d", resp.StatusCode)
 	}
 	return data, nil
+}
+
+func checkPoolMemberTarget(client *http.Client, newRequest func(string, bool) (*http.Request, error), appleID string) (safePoolMemberCheck, error) {
+	checkURL, err := appleEndpoint("https://setup.icloud.com/setup/family/checkiCloudMember")
+	if err != nil {
+		return safePoolMemberCheck{}, err
+	}
+	query := checkURL.Query()
+	query.Set("email-address", appleID)
+	checkURL.RawQuery = query.Encode()
+	request, err := newRequest(checkURL.String(), false)
+	if err != nil {
+		return safePoolMemberCheck{}, err
+	}
+	request.Method = http.MethodGet
+	request.Body = nil
+	response, err := client.Do(request)
+	if err != nil {
+		return safePoolMemberCheck{}, fmt.Errorf("pool member target check transport failed: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(response.Body, (2<<20)+1))
+	response.Body.Close()
+	if readErr != nil || len(data) > 2<<20 {
+		return safePoolMemberCheck{}, errors.New("pool member target check response is invalid")
+	}
+	if response.StatusCode != http.StatusOK {
+		return safePoolMemberCheck{}, fmt.Errorf("pool member target check returned HTTP %d", response.StatusCode)
+	}
+	checked, decodeErr := decodeObject(data)
+	if decodeErr != nil {
+		return safePoolMemberCheck{}, errors.New("pool member target check returned an unreadable response")
+	}
+	if familyResponseError(checked) {
+		return safePoolMemberCheck{}, fmt.Errorf("pool member target check returned an application error %s", safeFamilyStatus(checked))
+	}
+	validICloud, validPresent := checked["is-valid-icloud-account"].(bool)
+	termsAccepted, termsPresent := checked["terms-accepted"].(bool)
+	skipPayment, paymentPresent := checked["skipPaymentVerification"].(bool)
+	pvkEnabled, _ := checked["isPVKEnabled"].(bool)
+	return safePoolMemberCheck{ValidICloud: validICloud, ValidPresent: validPresent, TermsAccepted: termsAccepted,
+		TermsPresent: termsPresent, SkipPayment: skipPayment, PaymentPresent: paymentPresent, PVKEnabled: pvkEnabled}, nil
 }
 
 func tokenHeader(dsid, token string) string {
@@ -429,6 +480,7 @@ func run() error {
 	iCloudSharingUIDump := flag.String("icloud-sharing-ui-dump", "", "new private raw iCloud+ sharing UI response; requires -inspect-icloud-sharing-ui")
 	shareICloudStorage := flag.Bool("share-icloud-storage", false, "enable this organizer's current iCloud+ plan for the bound family")
 	joinSharedStorage := flag.Bool("join-shared-storage", false, "switch this non-organizer family member to the available shared iCloud+ plan")
+	checkPoolMemberDir := flag.String("check-pool-member-dir", "", "read-only Apple eligibility check for one independently activated pool account")
 	addPoolMemberDir := flag.String("add-pool-member-dir", "", "add one independently authenticated pool account through Apple's PET in-person flow")
 	removePoolMemberDir := flag.String("remove-pool-member-dir", "", "remove one current non-child pool member from this organizer's family")
 	targetPasswordEnv := flag.Bool("target-password-env", false, "use and immediately clear APPLESERVICES_TARGET_PASSWORD as Apple's rawFallback credential")
@@ -467,10 +519,13 @@ func run() error {
 	if *addPoolMemberDir != "" && (*removePoolMemberDir != "" || *inviteAccountDir != "" || *acceptInvite != "" || *createFamily || *shareICloudStorage) {
 		return errors.New("pool member addition must be a separate verified operation")
 	}
+	if *checkPoolMemberDir != "" && (*addPoolMemberDir != "" || *removePoolMemberDir != "" || *inviteAccountDir != "" || *acceptInvite != "" || *createFamily || *shareICloudStorage || *joinSharedStorage) {
+		return errors.New("pool member eligibility check must be read-only and separate")
+	}
 	if *removePoolMemberDir != "" && (*inviteAccountDir != "" || *acceptInvite != "" || *createFamily || *shareICloudStorage || *joinSharedStorage) {
 		return errors.New("pool member removal must be a separate verified operation")
 	}
-	if *joinSharedStorage && (*inviteAccountDir != "" || *acceptInvite != "" || *addPoolMemberDir != "" || *removePoolMemberDir != "") {
+	if *joinSharedStorage && (*inviteAccountDir != "" || *acceptInvite != "" || *addPoolMemberDir != "" || *removePoolMemberDir != "" || *checkPoolMemberDir != "") {
 		return errors.New("joining shared storage must be a separate current-member operation")
 	}
 	if *targetPasswordEnv && *addPoolMemberDir == "" {
@@ -1186,6 +1241,28 @@ func run() error {
 		organizers, children, me, selfOrganizer, selfMember = summarizeFamilyMembers(members)
 		fmt.Printf("bound pool member removal verified; members=%d purchase-sharing-enabled=false location-sharing-enabled=false\n", len(members))
 	}
+	if *checkPoolMemberDir != "" {
+		if organizers != 1 || me != 1 || !boolValue(details["is-member-of-family"]) || !selfOrganizer {
+			return errors.New("pool member eligibility check requires the current self organizer")
+		}
+		var target appleservices.Session
+		targetData, targetErr := os.ReadFile(filepath.Join(*checkPoolMemberDir, "session.json"))
+		if targetErr != nil || json.Unmarshal(targetData, &target) != nil || target.AppleID == "" || strings.EqualFold(target.AppleID, saved.AppleID) {
+			return errors.New("target pool account session is unavailable or invalid")
+		}
+		var targetAccepted acceptedCheckpoint
+		targetAcceptedData, targetErr := os.ReadFile(filepath.Join(*checkPoolMemberDir, "icloud-accepted.json"))
+		if targetErr != nil || json.Unmarshal(targetAcceptedData, &targetAccepted) != nil || !strings.EqualFold(targetAccepted.Session.AppleID, target.AppleID) || targetAccepted.Session.Tokens["mmeAuthToken"] == "" {
+			return errors.New("target pool account is not independently iCloud-activated")
+		}
+		check, checkErr := checkPoolMemberTarget(apiClient, newFamilyRequest, target.AppleID)
+		if checkErr != nil {
+			return checkErr
+		}
+		encoded, _ := json.Marshal(check)
+		fmt.Printf("POOL_MEMBER_CHECK_JSON=%s\n", encoded)
+		return nil
+	}
 	if *addPoolMemberDir != "" {
 		if organizers != 1 || me != 1 || !boolValue(details["is-member-of-family"]) {
 			return errors.New("pool member addition requires the current self organizer")
@@ -1218,36 +1295,14 @@ func run() error {
 		if targetCredential == "" || len(targetCredential) > 16<<10 {
 			return errors.New("target pool account has no usable family credential")
 		}
-		checkURL, checkErr := appleEndpoint("https://setup.icloud.com/setup/family/checkiCloudMember")
+		check, checkErr := checkPoolMemberTarget(apiClient, newFamilyRequest, target.AppleID)
 		if checkErr != nil {
 			return checkErr
 		}
-		query := checkURL.Query()
-		query.Set("email-address", target.AppleID)
-		checkURL.RawQuery = query.Encode()
-		checkRequest, requestErr := newFamilyRequest(checkURL.String(), false)
-		if requestErr != nil {
-			return requestErr
-		}
-		checkRequest.Method = http.MethodGet
-		checkRequest.Body = nil
-		checkResponse, requestErr := apiClient.Do(checkRequest)
-		if requestErr != nil {
-			return fmt.Errorf("pool member target check transport failed: %w", requestErr)
-		}
-		checkData, responseErr := io.ReadAll(io.LimitReader(checkResponse.Body, (2<<20)+1))
-		checkResponse.Body.Close()
-		if responseErr != nil || len(checkData) > 2<<20 || checkResponse.StatusCode != http.StatusOK {
-			return errors.New("Apple did not accept the pool member target check")
-		}
-		checked, decodeErr := decodeObject(checkData)
-		if decodeErr != nil || familyResponseError(checked) {
-			return errors.New("pool member target check returned an application error")
-		}
-		validICloud, validPresent := checked["is-valid-icloud-account"].(bool)
-		termsAccepted, termsPresent := checked["terms-accepted"].(bool)
-		skipPayment, paymentPresent := checked["skipPaymentVerification"].(bool)
-		pvkEnabled, _ := checked["isPVKEnabled"].(bool)
+		validICloud, validPresent := check.ValidICloud, check.ValidPresent
+		termsAccepted, termsPresent := check.TermsAccepted, check.TermsPresent
+		skipPayment, paymentPresent := check.SkipPayment, check.PaymentPresent
+		pvkEnabled := check.PVKEnabled
 		if !validPresent || !validICloud || !termsPresent || !termsAccepted || !paymentPresent || !skipPayment || pvkEnabled {
 			return fmt.Errorf("pool member requires unsupported target verification; valid=%t terms=%t skip-payment=%t pvk=%t", validICloud, termsAccepted, skipPayment, pvkEnabled)
 		}

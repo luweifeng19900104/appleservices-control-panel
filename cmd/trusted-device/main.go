@@ -924,7 +924,8 @@ func run() (runErr error) {
 			}
 			output, execErr := runFamilyHelper(queryCtx, helper, args, env)
 			if execErr != nil {
-				return control.Result{Message: "家庭操作未完成：" + lastNonEmptyLine(output), Stage: "family-action"}
+				message, failureStage := familyActionFailure(output)
+				return control.Result{Message: message, Stage: failureStage}
 			}
 			if action == "family-add-self" {
 				// The mutation runs under the organizer's identity; return a fresh
@@ -1464,6 +1465,17 @@ func lastNonEmptyLine(value string) string {
 		return line
 	}
 	return "家庭工具未返回状态"
+}
+
+func familyActionFailure(output string) (string, string) {
+	switch {
+	case strings.Contains(output, "pool member target check returned HTTP 401"):
+		return "母号家庭管理会话已过期，请先选择母号并使用已保存信息重新连接，然后再加入当前子号", "family-organizer-reconnect-required"
+	case strings.Contains(output, "target password environment is empty"):
+		return "当前子号没有可用的密码会话，请先使用已保存信息重新连接当前子号", "family-target-reconnect-required"
+	default:
+		return "家庭操作未完成：" + lastNonEmptyLine(output), "family-action"
+	}
 }
 
 const familyStatusPrefix = "FAMILY_STATUS_JSON="

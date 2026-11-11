@@ -1,10 +1,41 @@
 package main
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"reflect"
 	"testing"
 )
+
+func TestCheckPoolMemberTargetIsReadOnlyAndRedacted(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Query().Get("email-address") != "member@example.test" || r.Header.Get("X-Test-Auth") != "present" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
+		}
+		fmt.Fprint(w, `{"is-valid-icloud-account":true,"terms-accepted":true,"skipPaymentVerification":false,"isPVKEnabled":true}`)
+	}))
+	defer server.Close()
+	builder := func(raw string, _ bool) (*http.Request, error) {
+		target, err := url.Parse(raw)
+		if err != nil {
+			return nil, err
+		}
+		request, err := http.NewRequest(http.MethodGet, server.URL+"?"+target.RawQuery, nil)
+		if err == nil {
+			request.Header.Set("X-Test-Auth", "present")
+		}
+		return request, err
+	}
+	check, err := checkPoolMemberTarget(server.Client(), builder, "member@example.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !check.ValidPresent || !check.ValidICloud || !check.TermsPresent || !check.TermsAccepted || !check.PaymentPresent || check.SkipPayment || !check.PVKEnabled {
+		t.Fatalf("unexpected safe check: %#v", check)
+	}
+}
 
 func TestSafeFamilyUIFormsOmitsValuesAndResolvesAppleAction(t *testing.T) {
 	origin, _ := url.Parse("https://setup.icloud.com/setup/mac/family/setupFamilyUI")
