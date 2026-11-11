@@ -927,6 +927,8 @@ func run() (runErr error) {
 						status.StoreAuthenticated = false
 						_ = status.save(*dir)
 						result.Message = "请先验证购买会话；未提交购买"
+					} else if failure.Stage == "purchase-skill-buy" && failure.AppleCode == "3017" {
+						result.Message = "Apple Media Services 已拒绝本次购买（3017）。账号与 iCloud 会话正常，但购买侧需要先在官方 App Store 或 Apple Music 中完成账户审核，并核对美区付款方式、账单地址、未付订单和购买限制；订阅未生效，请勿连续重试"
 					}
 				}
 				return result
