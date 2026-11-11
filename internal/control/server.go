@@ -66,12 +66,23 @@ type Result struct {
 	AppleCode           string                          `json:"apple_code,omitempty"`
 	AppleHint           string                          `json:"apple_hint,omitempty"`
 	StoreAuthentication *icloud.StoreAuthenticationInfo `json:"store_authentication,omitempty"`
+	Subscription        *SubscriptionInfo               `json:"subscription,omitempty"`
 	StoreForm           *icloud.StoreFormInfo           `json:"store_form,omitempty"`
 	Probes              []icloud.StorageEndpointProbe   `json:"probes,omitempty"`
 	Family              *FamilyInfo                     `json:"family,omitempty"`
 	HideMyEmail         *icloud.HideMyEmailInfo         `json:"hide_my_email,omitempty"`
 	HMECandidate        string                          `json:"hme_candidate,omitempty"`
 	Activation          *ActivationInfo                 `json:"activation,omitempty"`
+}
+
+// SubscriptionInfo is the UI-safe Store readback. Apple subscription IDs and
+// raw responses never cross the worker control boundary.
+type SubscriptionInfo struct {
+	Present       bool   `json:"present"`
+	StorageAmount string `json:"storage_amount,omitempty"`
+	PaidPrice     string `json:"paid_price,omitempty"`
+	AutoRenew     bool   `json:"auto_renew"`
+	Verified50GB  bool   `json:"verified_50gb"`
 }
 
 type ActivationInfo struct {
@@ -200,7 +211,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch action.Action {
-	case "code", "devices", "refresh", "validate-account", "allow", "deny", "submit-sms", "resend-sms", "submit-account-code", "storage-info", "storage-plan", "storage-authenticate", "storage-skill-auth-local", "storage-skill-auth-file", "storage-skill-purchase-us", "storage-preview", "storage-purchase", "storage-probe", "storage-buy", "family-info", "family-add-self", "family-join-storage", "hme-list", "hme-accept-terms", "hme-generate", "hme-reserve", "hme-forward", "hme-reachable-start", "hme-reachable-verify", "hme-update", "hme-deactivate", "hme-reactivate", "hme-delete", "submit-pairing":
+	case "code", "devices", "refresh", "validate-account", "allow", "deny", "submit-sms", "resend-sms", "submit-account-code", "storage-info", "storage-plan", "storage-authenticate", "storage-skill-auth-local", "storage-skill-auth-file", "storage-subscription", "storage-skill-purchase-us", "storage-preview", "storage-purchase", "storage-probe", "storage-buy", "family-info", "family-add-self", "family-join-storage", "hme-list", "hme-accept-terms", "hme-generate", "hme-reserve", "hme-forward", "hme-reachable-start", "hme-reachable-verify", "hme-update", "hme-deactivate", "hme-reactivate", "hme-delete", "submit-pairing":
 	default:
 		http.Error(w, `{"message":"unknown action"}`, 400)
 		return
@@ -208,6 +219,8 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	timeout := 90 * time.Second
 	if action.Action == "storage-skill-auth-file" || action.Action == "storage-skill-auth-local" {
 		timeout = 3 * time.Minute
+	} else if action.Action == "storage-skill-purchase-us" {
+		timeout = 2 * time.Minute
 	} else if action.Action == "family-add-self" || strings.HasPrefix(action.Action, "hme-") {
 		timeout = 2 * time.Minute
 	}

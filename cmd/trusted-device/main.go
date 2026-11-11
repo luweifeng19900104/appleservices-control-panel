@@ -862,19 +862,18 @@ func run() (runErr error) {
 			}
 			return control.Result{OK: true, Message: "实时验证码已在同一 Store 会话中通过；未提交购买", StoreAuthentication: info}
 		}
-		if action == "storage-skill-purchase-us" {
-			buyer, ok := active.(interface {
-				SubmitSkillStoragePurchase(context.Context, appleservices.PurchaseTarget, string) (*appleservices.PurchaseResult, error)
+		if action == "storage-subscription" {
+			reader, ok := active.(interface {
+				ReadSkillStorageSubscription(context.Context) (*icloud.SkillSubscriptionInfo, error)
 			})
 			if !ok {
-				return control.Result{Message: "后台版本不支持美区 iCloud+ 购买", Stage: "worker"}
+				return control.Result{Message: "后台版本不支持订阅检查", Stage: "worker"}
 			}
-			queryCtx, done := context.WithTimeout(actionCtx, 90*time.Second)
+			queryCtx, done := context.WithTimeout(actionCtx, 30*time.Second)
 			defer done()
-			target := appleservices.PurchaseTarget{Bytes: 50 * 1024 * 1024 * 1024, PriceMinor: 99, Currency: "USD", Period: "month"}
-			purchase, err := buyer.SubmitSkillStoragePurchase(queryCtx, target, "290571")
+			info, err := reader.ReadSkillStorageSubscription(queryCtx)
 			if err != nil {
-				result := control.Result{Message: "美区购买或核验未完成；不得自动重试", Stage: "purchase"}
+				result := control.Result{Message: "订阅检查未完成；未提交购买", Stage: "purchase-subscription-readback"}
 				var failure *icloud.StorageError
 				if errors.As(err, &failure) {
 					result.Stage, result.HTTPStatus, result.AppleCode, result.AppleHint = failure.Stage, failure.HTTPStatus, failure.AppleCode, failure.Hint
@@ -886,7 +885,62 @@ func run() (runErr error) {
 				}
 				return result
 			}
-			return control.Result{OK: true, Purchase: purchase, Message: "美区 50GB 订阅和付费配额均已核验", Stage: "purchase-completed"}
+			message := "Apple 当前没有返回有效 iCloud+ 订阅"
+			if info.Present {
+				message = "Apple 已返回当前 iCloud+ 订阅状态"
+			}
+			return control.Result{OK: true, Message: message, Stage: "purchase-subscription-readback", Subscription: safeSubscriptionInfo(info)}
+		}
+		if action == "storage-skill-purchase-us" {
+			buyer, ok := active.(interface {
+				SubmitSkillStoragePurchase(context.Context, appleservices.PurchaseTarget, string) (*appleservices.PurchaseResult, error)
+			})
+			if !ok {
+				return control.Result{Message: "后台版本不支持美区 iCloud+ 购买", Stage: "worker"}
+			}
+			queryCtx, done := context.WithTimeout(actionCtx, 90*time.Second)
+			defer done()
+			target := appleservices.PurchaseTarget{Bytes: 50 * 1024 * 1024 * 1024, PriceMinor: 99, Currency: "USD", Period: "month"}
+			journal, journalErr := startPurchaseAttemptJournal(*dir, action, target)
+			if journalErr != nil {
+				return control.Result{Message: "购买安全记录无法创建，未提交购买", Stage: "purchase-journal"}
+			}
+			if journalErr = journal.markSubmitting(); journalErr != nil {
+				return control.Result{Message: "购买安全记录无法更新，未提交购买", Stage: "purchase-journal"}
+			}
+			purchase, err := buyer.SubmitSkillStoragePurchase(queryCtx, target, "290571")
+			journalErr = journal.finish(active, purchase, err)
+			if journalErr != nil {
+				return control.Result{Purchase: purchase, Subscription: journal.record.Subscription, Message: "购买结果安全记录未完成；不得自动重试", Stage: "purchase-journal-finalize"}
+			}
+			if journal.record.Verified && purchase != nil && purchase.State != "existing-paid-plan" {
+				purchase.State = "completed"
+				purchase.QuotaVerified = true
+				err = nil
+			}
+			if err != nil {
+				result := control.Result{Message: "美区购买或核验未完成；不得自动重试", Stage: "purchase", Purchase: purchase, Subscription: journal.record.Subscription}
+				var failure *icloud.StorageError
+				if errors.As(err, &failure) {
+					result.Stage, result.HTTPStatus, result.AppleCode, result.AppleHint = failure.Stage, failure.HTTPStatus, failure.AppleCode, failure.Hint
+					if failure.Stage == "purchase-store-session" {
+						status.StoreAuthenticated = false
+						_ = status.save(*dir)
+						result.Message = "请先验证购买会话；未提交购买"
+					}
+				}
+				return result
+			}
+			if purchase == nil {
+				return control.Result{Message: "Apple 未返回购买状态；不得自动重试", Stage: "purchase-verification-pending", Subscription: journal.record.Subscription}
+			}
+			if purchase.State == "existing-paid-plan" {
+				return control.Result{OK: true, Purchase: purchase, Subscription: journal.record.Subscription, Message: "账号已有 iCloud+ 订阅，未重复提交购买", Stage: "purchase-existing"}
+			}
+			if purchase.State != "completed" || !purchase.QuotaVerified || !journal.record.Verified {
+				return control.Result{Purchase: purchase, Subscription: journal.record.Subscription, Message: "Apple 返回结果尚未通过订阅和付费配额双重核验；不得自动重试", Stage: "purchase-verification-pending"}
+			}
+			return control.Result{OK: true, Purchase: purchase, Subscription: journal.record.Subscription, Message: "美区 50GB 订阅和付费配额均已核验", Stage: "purchase-completed"}
 		}
 		if action == "family-info" || action == "family-add-self" || action == "family-join-storage" {
 			executable, execErr := os.Executable()

@@ -479,8 +479,9 @@ func (s *StoreCommerceSession) skillBuy(ctx context.Context, q url.Values) (map[
 	return response, nil
 }
 
-// SubmitSkillPurchase sends the skill's native offer, and at most one exact
-// Apple-issued auto-renew confirmation. It never uses presentOffers POST.
+// SubmitSkillPurchase sends the skill's native offer and at most two exact
+// Apple-issued confirmations. Each continuation is bound back to the original
+// account and 50 GB offer; a repeated or third dialog is never submitted.
 func (s *StoreCommerceSession) SubmitSkillPurchase(ctx context.Context, info *StoragePlanInfo, target PurchaseTarget, expectedTerms string) (*PurchaseResult, error) {
 	if err := ValidatePurchaseTarget(info, target); err != nil {
 		return nil, err
@@ -510,10 +511,15 @@ func (s *StoreCommerceSession) SubmitSkillPurchase(ctx context.Context, info *St
 			return nil, err
 		}
 	}
-	if failure, ok := r["failureType"]; ok && fmt.Sprint(failure) != "" && fmt.Sprint(failure) != "0" {
-		return nil, &StorageError{Stage: "purchase-skill-buy", HTTPStatus: 200, AppleCode: fmt.Sprint(failure)}
-	}
-	if dialog, ok := r["dialog"].(map[string]any); ok {
+	seen := map[string]bool{}
+	for confirmation := 0; ; confirmation++ {
+		if failure, ok := r["failureType"]; ok && fmt.Sprint(failure) != "" && fmt.Sprint(failure) != "0" {
+			return nil, &StorageError{Stage: "purchase-skill-buy", HTTPStatus: 200, AppleCode: fmt.Sprint(failure)}
+		}
+		dialog, ok := r["dialog"].(map[string]any)
+		if !ok {
+			break
+		}
 		action, _ := dialog["okButtonAction"].(map[string]any)
 		fmt.Printf("Apple purchase dialog: id=%s; action=%s\n", safePurchaseField(dialog["dialogId"]), safePurchaseField(action["kind"]))
 		// Some Store pods omit dialogId while retaining the authoritative Buy
@@ -521,6 +527,9 @@ func (s *StoreCommerceSession) SubmitSkillPurchase(ctx context.Context, info *St
 		// contract; require it and validate the parameters below.
 		if action["kind"] != "Buy" {
 			return &PurchaseResult{State: "confirmation-required", HTTPStatus: 200}, nil
+		}
+		if confirmation >= 2 {
+			return &PurchaseResult{State: "confirmation-required", HTTPStatus: 200}, &StorageError{Stage: "purchase-skill-confirmation-limit", HTTPStatus: 200}
 		}
 		params, _ := action["buyParams"].(string)
 		next, err := url.ParseQuery(params)
@@ -531,6 +540,14 @@ func (s *StoreCommerceSession) SubmitSkillPurchase(ctx context.Context, info *St
 			return nil, err
 		}
 		next.Set("hasShownExtraConfirmationNeededForBuyRecurringItem", "true")
+		if confirmation > 0 {
+			next.Set("hasConfirmedBuySubscription", "true")
+		}
+		wire := next.Encode()
+		if seen[wire] {
+			return &PurchaseResult{State: "confirmation-required", HTTPStatus: 200}, &StorageError{Stage: "purchase-skill-confirmation-loop", HTTPStatus: 200}
+		}
+		seen[wire] = true
 		r, err = s.skillBuy(ctx, next)
 		if err != nil {
 			return nil, err
@@ -540,7 +557,7 @@ func (s *StoreCommerceSession) SubmitSkillPurchase(ctx context.Context, info *St
 		return nil, &StorageError{Stage: "purchase-skill-buy", HTTPStatus: 200, AppleCode: fmt.Sprint(failure)}
 	}
 	if r["jingleDocType"] == "purchaseSuccess" && r["jingleAction"] == "purchaseProduct" && fmt.Sprint(r["status"]) == "0" {
-		return &PurchaseResult{State: "completed", HTTPStatus: 200}, nil
+		return &PurchaseResult{State: "completed", HTTPStatus: 200, AppleConfirmed: true}, nil
 	}
 	return &PurchaseResult{State: "verification-pending", HTTPStatus: 200}, nil
 }

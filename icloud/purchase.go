@@ -33,6 +33,7 @@ type PurchaseResult struct {
 	ExternalClientRequired bool   `json:"external_client_required"`
 	HandoffPath            string `json:"handoff_path,omitempty"`
 	QuotaVerified          bool   `json:"quota_verified"`
+	AppleConfirmed         bool   `json:"apple_confirmed"`
 	confirmation           url.Values
 	confirmationOriginal   url.Values
 }
@@ -663,7 +664,7 @@ func submitStoreForm(ctx context.Context, client *http.Client, offerURL, present
 			return nil, &StorageError{Stage: "purchase-authentication", HTTPStatus: pResp.StatusCode}
 		}
 		if storePurchaseComplete(pBody) {
-			return &PurchaseResult{State: "completed", HTTPStatus: pResp.StatusCode}, nil
+			return &PurchaseResult{State: "completed", HTTPStatus: pResp.StatusCode, AppleConfirmed: true}, nil
 		}
 		for _, next := range parseStoreForms(pBody) {
 			if strings.Contains(next.action, "buyProduct") {
@@ -872,7 +873,7 @@ func followStorePurchase(ctx context.Context, client *http.Client, endpoint, ref
 				Hint: hint + ";chain-" + strings.Join(trace, ">") + ";jar=" + strings.Join(jarNames, ",")}
 		}
 		if storePurchaseComplete(body) {
-			return &PurchaseResult{State: "completed", HTTPStatus: resp.StatusCode}, nil
+			return &PurchaseResult{State: "completed", HTTPStatus: resp.StatusCode, AppleConfirmed: true}, nil
 		}
 		for _, form := range parseStoreForms(body) {
 			if strings.Contains(form.action, "volumeAuthenticate") {

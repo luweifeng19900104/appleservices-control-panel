@@ -3,6 +3,7 @@ package icloud
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -43,7 +44,7 @@ func TestSignedSkillStoreSignsEachChallengeBodyAndStopsOnApplicationHTTP(t *test
 	}
 }
 
-func TestSkillPurchasePreservesFullConfirmationAndVerifiesSubscription(t *testing.T) {
+func TestSkillPurchasePreservesTwoConfirmationsAndVerifiesSubscription(t *testing.T) {
 	buys := 0
 	client := &http.Client{Transport: testStoreTransport(func(req *http.Request) (*http.Response, error) {
 		var response []byte
@@ -70,6 +71,17 @@ func TestSkillPurchasePreservesFullConfirmationAndVerifiesSubscription(t *testin
 				if body["opaqueAppleField"] != "preserve-me" || body["hasShownExtraConfirmationNeededForBuyRecurringItem"] != "true" {
 					t.Fatal("Apple confirmation was reconstructed or incomplete")
 				}
+				u, _ := url.Parse(DirectStorageOfferURL("TEST-GUID"))
+				q := u.Query()
+				q.Set("hasConfirmAutoRenew", "true")
+				q.Set("opaqueAppleField", "preserve-me")
+				q.Set("opaqueSecondField", "preserve-second")
+				response, _ = plist.Marshal(map[string]any{"dialog": map[string]any{"okButtonAction": map[string]any{"kind": "Buy", "buyParams": q.Encode()}}}, plist.XMLFormat)
+			} else if buys == 3 {
+				if body["opaqueAppleField"] != "preserve-me" || body["opaqueSecondField"] != "preserve-second" ||
+					body["hasShownExtraConfirmationNeededForBuyRecurringItem"] != "true" || body["hasConfirmedBuySubscription"] != "true" {
+					t.Fatal("second Apple confirmation was reconstructed or incomplete")
+				}
 				response, _ = plist.Marshal(map[string]any{"jingleDocType": "purchaseSuccess", "jingleAction": "purchaseProduct", "status": 0}, plist.XMLFormat)
 			} else {
 				t.Fatal("purchase replayed")
@@ -88,12 +100,36 @@ func TestSkillPurchasePreservesFullConfirmationAndVerifiesSubscription(t *testin
 	target := PurchaseTarget{Bytes: 53687091200, PriceMinor: 600, Currency: "CNY", Period: "month"}
 	info := &StoragePlanInfo{Plans: []StoragePlan{{Bytes: target.Bytes, Price: 600, Currency: "CNY", Period: "month", Available: true}}}
 	r, err := s.SubmitSkillPurchase(context.Background(), info, target, "")
-	if err != nil || r.State != "completed" || buys != 2 {
+	if err != nil || r.State != "completed" || !r.AppleConfirmed || buys != 3 {
 		t.Fatalf("native purchase failed: %v", err)
 	}
 	sub, err := s.ReadSkillSubscription(context.Background())
 	if err != nil || !sub.Verified50GB || !sub.AutoRenew {
 		t.Fatalf("actual paid storage not verified: %v", err)
+	}
+}
+
+func TestSkillPurchaseStopsBeforeThirdConfirmationSubmission(t *testing.T) {
+	buys := 0
+	client := &http.Client{Transport: testStoreTransport(func(req *http.Request) (*http.Response, error) {
+		buys++
+		if buys > 3 {
+			t.Fatal("third confirmation was submitted")
+		}
+		raw, _ := DirectStorageOfferURLForTarget("TEST-GUID", PurchaseTarget{Bytes: 53687091200, PriceMinor: 99, Currency: "USD", Period: "month"})
+		u, _ := url.Parse(raw)
+		q := u.Query()
+		q.Set("hasConfirmAutoRenew", "true")
+		response, _ := plist.Marshal(map[string]any{"dialog": map[string]any{"okButtonAction": map[string]any{"kind": "Buy", "buyParams": q.Encode()}}}, plist.XMLFormat)
+		return &http.Response{StatusCode: 200, Request: req, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(string(response)))}, nil
+	})}
+	s := &StoreCommerceSession{client: client, identity: &storeSession{DSID: "123", PasswordToken: "test-token", GUID: "TEST-GUID", StoreFront: "143465"}}
+	target := PurchaseTarget{Bytes: 53687091200, PriceMinor: 99, Currency: "USD", Period: "month"}
+	info := &StoragePlanInfo{Plans: []StoragePlan{{Bytes: target.Bytes, Price: 99, Currency: "USD", Period: "month", Available: true}}}
+	result, err := s.SubmitSkillPurchase(context.Background(), info, target, "")
+	var failure *StorageError
+	if !errors.As(err, &failure) || failure.Stage != "purchase-skill-confirmation-limit" || result == nil || result.State != "confirmation-required" || buys != 3 {
+		t.Fatalf("confirmation limit was not enforced: buys=%d result=%+v err=%v", buys, result, err)
 	}
 }
 

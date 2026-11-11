@@ -82,6 +82,19 @@ func (l *Login) CheckSkillStoragePurchaseSession(ctx context.Context, codeProvid
 	return &icloud.StoreAuthenticationInfo{Ready: true}, nil
 }
 
+// ReadSkillStorageSubscription reads the Store subscription list without
+// submitting or changing a purchase. The returned value stays in memory; UI
+// callers must redact the private subscription identifier.
+func (l *Login) ReadSkillStorageSubscription(ctx context.Context) (*icloud.SkillSubscriptionInfo, error) {
+	if l.needsTwoFactor || l.client == nil {
+		return nil, errors.New("appleservices: complete iCloud login before reading Store subscriptions")
+	}
+	if !l.storeCommerce.MatchesAccount(l.client.DSID) {
+		return nil, &icloud.StorageError{Stage: "purchase-store-session"}
+	}
+	return l.storeCommerce.ReadSkillSubscription(ctx)
+}
+
 // SubmitSkillStoragePurchase submits one exact allowlisted offer, then
 // verifies both Apple's subscription detail and a fresh paid quota read.
 func (l *Login) SubmitSkillStoragePurchase(ctx context.Context, target PurchaseTarget, expectedTerms string) (*PurchaseResult, error) {
@@ -93,33 +106,43 @@ func (l *Login) SubmitSkillStoragePurchase(ctx context.Context, target PurchaseT
 		return nil, err
 	}
 	if before.Present {
-		return nil, errors.New("appleservices: an iCloud+ subscription is already active")
+		result := &PurchaseResult{State: "existing-paid-plan", HTTPStatus: 200}
+		if before.MatchesTarget(target) {
+			if quota, quotaErr := l.StorageInfo(ctx); quotaErr == nil && quota.TotalBytes >= target.Bytes && quota.PaidBytes >= target.Bytes {
+				result.QuotaVerified = true
+			}
+		}
+		return result, nil
 	}
 	plans, err := l.StoragePlanInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
 	result, err := l.storeCommerce.SubmitSkillPurchase(ctx, plans, target, expectedTerms)
-	if err != nil || result == nil || result.State != "completed" {
+	if err != nil || result == nil {
 		return result, err
 	}
 	subscription, err := l.storeCommerce.ReadSkillSubscription(ctx)
-	if err != nil || !subscription.MatchesTarget(target) {
-		return result, errors.New("appleservices: purchase returned but subscription verification is incomplete")
+	if err != nil {
+		return result, err
+	}
+	if !subscription.MatchesTarget(target) {
+		return result, &icloud.StorageError{Stage: "purchase-verification-pending", HTTPStatus: result.HTTPStatus}
 	}
 	for attempt := 0; attempt < 5; attempt++ {
 		quota, quotaErr := l.StorageInfo(ctx)
 		if quotaErr == nil && quota.TotalBytes >= target.Bytes && quota.PaidBytes >= target.Bytes {
+			result.State = "completed"
 			result.QuotaVerified = true
 			return result, nil
 		}
 		select {
 		case <-ctx.Done():
-			return result, errors.New("appleservices: purchase returned but quota verification timed out")
+			return result, &icloud.StorageError{Stage: "purchase-quota-verification", HTTPStatus: result.HTTPStatus}
 		case <-time.After(2 * time.Second):
 		}
 	}
-	return result, errors.New("appleservices: purchase returned but paid quota is not active")
+	return result, &icloud.StorageError{Stage: "purchase-quota-verification", HTTPStatus: result.HTTPStatus}
 }
 
 // StorePasswordReady reports only whether this live worker retained the
